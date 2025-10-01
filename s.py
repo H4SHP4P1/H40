@@ -4,11 +4,27 @@ import os
 
 app = Flask(__name__)
 
-app.secret_key = 'e116a88b20146059e79872e414c2c770982d1c6a28293774026330084f7b60e6'
+API_SECRET_KEY = 'e116a88b20146059e79872e414c2c770982d1c6a28293774026330084f7b60e6'
+app.secret_key = API_SECRET_KEY
 
 CLIENT_STATUS = {}
 PENDING_COMMANDS = {}
 COMMAND_OUTPUTS = {}
+LAST_SEEN_TIMEOUT = 120 
+
+def check_auth(req):
+    """Checks for the Listener's API key in the request header."""
+    auth_header = req.headers.get('X-API-KEY')
+    return auth_header == API_SECRET_KEY
+
+def get_current_clients():
+    """Filters out clients who haven't sent a heartbeat recently."""
+    active_clients = {}
+    current_time = time.time()
+    for uid, data in CLIENT_STATUS.items():
+        if current_time - data.get('timestamp', 0) < LAST_SEEN_TIMEOUT:
+            active_clients[uid] = data
+    return active_clients
 
 @app.route("/status-check", methods=["POST"])
 def status_check():
@@ -37,20 +53,30 @@ def post_output():
 
 @app.route("/list-clients", methods=["GET"])
 def list_clients():
-    return jsonify(CLIENT_STATUS), 200
+    if not check_auth(request): return jsonify({"error": "Unauthorized"}), 401
+    return jsonify(get_current_clients()), 200
 
 @app.route("/send-command", methods=["POST"])
 def send_command():
+    if not check_auth(request): return jsonify({"error": "Unauthorized"}), 401
+    
     data = request.json
     user_id = data.get("user_id")
     command = data.get("command")
-    if user_id and command:
+    
+    if user_id and command and user_id in get_current_clients():
         PENDING_COMMANDS[user_id] = command
         return jsonify({"message": f"Command '{command}' queued for {user_id}"}), 200
+    
+    if user_id not in get_current_clients():
+        return jsonify({"error": "Client offline or unknown"}), 404
+        
     return jsonify({"error": "Missing user_id or command"}), 400
 
 @app.route("/get-output", methods=["GET"])
 def get_output():
+    if not check_auth(request): return jsonify({"error": "Unauthorized"}), 401
+    
     user_id = request.args.get("user_id")
     if user_id:
         outputs = COMMAND_OUTPUTS.pop(user_id, [])
