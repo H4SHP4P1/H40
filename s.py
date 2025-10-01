@@ -64,6 +64,29 @@ def get_live_status():
         
     return jsonify(live_report)
 
+@app.route('/delete-user', methods=['POST'])
+def delete_user_id():
+    if not request.is_json:
+        return jsonify({"message": "Invalid format"}), 400
+
+    data = request.get_json()
+    
+    auth_key = data.get('auth_key')
+    user_id_to_delete = data.get('user_id')
+    
+    if auth_key != VIEWER_SECRET_KEY:
+        print(f"AUTHENTICATION FAILURE for DELETE request from {request.remote_addr}")
+        return jsonify({"error": "Authentication Failed. Invalid key parameter."}), 401
+
+    with tracker_lock:
+        if user_id_to_delete in status_tracker:
+            del status_tracker[user_id_to_delete]
+            print(f"USER DELETED: {user_id_to_delete}")
+            return jsonify({"message": f"User ID {user_id_to_delete} removed."}), 200
+        else:
+            return jsonify({"message": f"User ID {user_id_to_delete} not found."}), 404
+
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
