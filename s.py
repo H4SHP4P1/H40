@@ -13,12 +13,10 @@ COMMAND_OUTPUTS = {}
 LAST_SEEN_TIMEOUT = 120 
 
 def check_auth(req):
-    """Checks for the Listener's API key in the request header."""
     auth_header = req.headers.get('X-API-KEY')
     return auth_header == API_SECRET_KEY
 
 def get_current_clients():
-    """Filters out clients who haven't sent a heartbeat recently."""
     active_clients = {}
     current_time = time.time()
     for uid, data in CLIENT_STATUS.items():
